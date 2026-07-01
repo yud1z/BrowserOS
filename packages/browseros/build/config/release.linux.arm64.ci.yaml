@@ -1,0 +1,38 @@
+# BrowserOS Linux arm64 CI Release Build (unsigned, no upload)
+#
+# arm64 counterpart of release.linux.ci.yaml. Same module pipeline; only the
+# target architecture differs. Cross-compiled from the x64 WarpBuild runner
+# (target_cpu=arm64): the configure module emits the arm64 GN args and the
+# arm64 sysroot is installed in CI before the build (see nightly-release.yml).
+#
+# Produces BrowserOS_v<version>_arm64.AppImage (+ .deb) via package_linux.
+#
+# Run (from packages/browseros, after checkout + clean + sync):
+#   uv run browseros build --config build/config/release.linux.arm64.ci.yaml --chromium-src <src>
+
+build:
+  type: release
+  architecture: arm64
+
+gn_flags:
+  file: build/config/gn/flags.linux.release.gn
+
+modules:
+  # Patches & Resources
+  - download_resources
+  - resources
+  - bundled_extensions
+  - chromium_replace
+  - string_replaces
+  - series_patches
+  - patches
+
+  # Build
+  - configure
+  - compile
+
+  # Package (Linux is not code signed)
+  - package_linux
+
+notifications:
+  slack: false

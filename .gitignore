@@ -34,3 +34,7 @@ packages/browseros/build/tools/
 .devtools/
 .omc/
 .llm/
+
+# Local tooling / generated output (do not commit)
+.cursor/
+graphify-out/

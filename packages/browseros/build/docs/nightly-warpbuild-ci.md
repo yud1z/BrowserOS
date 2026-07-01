@@ -1,9 +1,9 @@
 # Nightly WarpBuild Release Builds
 
 `.github/workflows/nightly-release.yml` builds UNSIGNED release artifacts for
-Linux x64, Windows x64, and macOS arm64 every night on WarpBuild cloud
-runners, uploads them to the Actions run, and refreshes a rolling `nightly`
-prerelease on GitHub. It complements (does not replace) the signed
+Linux x64, Linux arm64 (cross-compiled), Windows x64, and macOS arm64 every
+night on WarpBuild cloud runners, uploads them to the Actions run, and
+refreshes a rolling `nightly` prerelease on GitHub. It complements (does not replace) the signed
 self-hosted macOS nightly in `nightly-macos-build.yml`; once signing is wired
 up here, that workflow can be retired.
 
@@ -147,8 +147,30 @@ cache storage.
 - **Compiler cache (sccache/ccache via `cc_wrapper`)** in a CI gn flags
   variant: nightly sources are nearly identical night-to-night, so this is
   the lever that could cut warm builds to well under an hour.
-- **Linux arm64** via `architecture: [x64, arm64]` in the CI config once
-  the x64 lane is green (sysroot bootstrap already handled by the modules).
+
+## Linux arm64 (cross-compiled)
+
+The matrix builds an arm64 Linux lane in addition to x64, using
+`build/config/release.linux.arm64.ci.yaml` (`architecture: arm64`). It runs
+on the same `warp-ubuntu-2204-x64-32x` runner and cross-compiles:
+
+- The `configure` module installs the arm64 Debian sysroot
+  (`install-sysroot.py`, idempotent) before `gn gen` and emits
+  `target_cpu = "arm64"`.
+- `package_linux` builds the arm64 `.AppImage`/`.deb` using the host
+  x86_64 `appimagetool` (see `LINUX_HOST_APPIMAGETOOL`).
+- Its chromium checkout is cached under a separate key
+  (`chromium-src-linux-arm64-v1-<version>`), so the first arm64 night is a
+  cold sync (also fetches the arm64 sysroot); expect cold timings once.
+
+Artifacts land as `browseros-nightly-linux-arm64` (e.g.
+`BrowserOS_v<version>_arm64.AppImage`). `-f platforms=linux` builds both the
+x64 and arm64 lanes. This lane is newly wired — the first run per pin is the
+one to watch for sysroot/toolchain issues.
+
+> arm64 Linux AppImages are unofficial (not on the downloads page). They
+> target generic arm64 glibc/Wayland; running on postmarketOS or other
+> phone distros may need matching glibc/GPU userspace and is untested.
 
 ## Signing later (placeholders)
 

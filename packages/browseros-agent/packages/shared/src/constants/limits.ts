@@ -57,6 +57,13 @@ export const AGENT_LIMITS = {
   COMPACTION_TRANSCRIPT_TOOL_OUTPUT_MAX_CHARS: 2_000,
 } as const
 
+export const SESSION_LIMITS = {
+  /** Max concurrent agent sessions kept in memory before LRU eviction. */
+  MAX_COUNT: 20,
+  /** Sessions idle longer than this are disposed on the next store write. */
+  IDLE_MS: 30 * 60 * 1000,
+} as const
+
 export const TOOL_LIMITS = {
   INLINE_PAGE_CONTENT_MAX_CHARS: 5_000,
   FILESYSTEM_READ_MAX_LINES: 500,

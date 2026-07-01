@@ -1,7 +1,8 @@
 name: Nightly Release Build
 
-# Manual UNSIGNED release builds of BrowserOS for all three platforms on
-# WarpBuild runners. Signing is intentionally not wired up yet; see
+# Manual UNSIGNED release builds of BrowserOS on WarpBuild runners:
+# Linux (x64 + arm64), Windows x64, and macOS arm64. arm64 Linux is
+# cross-compiled on the x64 runner. Signing is intentionally not wired up yet; see
 # packages/browseros/build/docs/nightly-warpbuild-ci.md for the design and
 # the secret names that enable signing later.
 #
@@ -52,8 +53,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          # linux arm64 is cross-compiled on the x64 runner: the configure
+          # module installs the arm64 Debian sysroot and emits
+          # target_cpu="arm64", and package_linux builds the arm64 AppImage
+          # with the host x86_64 appimagetool. Separate chromium cache key
+          # (keyed on arch) so it warms independently of the x64 lane.
           matrix='[
             {"platform":"linux","arch":"x64","runner":"warp-ubuntu-2204-x64-32x","config":"release.linux.ci.yaml","timeout":660},
+            {"platform":"linux","arch":"arm64","runner":"warp-ubuntu-2204-x64-32x","config":"release.linux.arm64.ci.yaml","timeout":720},
             {"platform":"windows","arch":"x64","runner":"warp-windows-2025-x64-32x","config":"release.windows.ci.yaml","timeout":780},
             {"platform":"macos","arch":"arm64","runner":"warp-macos-26-arm64-12x","config":"release.macos.arm64.ci.yaml","timeout":720}
           ]'
