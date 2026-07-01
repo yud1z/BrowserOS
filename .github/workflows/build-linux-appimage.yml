@@ -1,25 +1,31 @@
 name: Build Linux AppImage (self-hosted)
 
 # Builds UNSIGNED BrowserOS Linux AppImages (x64 and/or arm64) on your own
-# self-hosted runner — no WarpBuild, no R2 secrets required. The agent server
-# resources are built locally with Bun and staged into the browser, so the
-# `download_resources` (R2) module is dropped from the build config. arm64 is
-# cross-compiled from an x64 runner (configure installs the arm64 sysroot).
+# self-hosted runner(s) — no WarpBuild, no R2 secrets required. The agent
+# server resources are built locally with Bun and staged into the browser, so
+# the `download_resources` (R2) module is dropped from the build config.
+#
+# arm64 can be built two ways (input `arm64_mode`):
+#   - cross  (default): cross-compiled on the x64 runner; `configure` installs
+#             the arm64 sysroot and `install-build-deps.sh --arm` adds cross libs.
+#   - native: built on an arm64 runner (labels from `arm64_runner_labels`).
 #
 # ── One-time runner setup ──────────────────────────────────────────────
-#   Hardware: >=200 GB free disk, >=32 GB RAM, 16+ cores recommended.
-#   1. Repo → Settings → Actions → Runners → New self-hosted runner (Linux x64).
-#      Give it labels: self-hosted, Linux, X64  (defaults below).
-#   2. Install: git, python3, curl, unzip, and Bun (https://bun.sh).
-#      uv is auto-installed by astral-sh/setup-uv. depot_tools is fetched by
-#      scripts/ci/setup_chromium.py. Chromium build deps are installed by the
-#      "Install Linux build deps" step (needs passwordless sudo for apt).
-#   3. Optional: set repo variable BROWSEROS_CHROMIUM_SRC to a persistent path
-#      (e.g. /home/runner/browseros-chromium/src) so the ~100 GB checkout is
-#      reused across runs. Defaults to a path next to the workspace.
+#   Hardware (per runner): >=200 GB free disk, >=32 GB RAM, 16+ cores.
+#   1. Repo → Settings → Actions → Runners → New self-hosted runner.
+#      - x64 runner labels: self-hosted, Linux, X64   (x64 + arm64-cross)
+#      - arm64 runner labels: self-hosted, Linux, ARM64  (only for arm64_mode=native)
+#   2. Install on each runner: git, python3, curl, unzip, and Bun
+#      (https://bun.sh). uv is auto-installed by astral-sh/setup-uv;
+#      depot_tools is fetched by scripts/ci/setup_chromium.py; Chromium build
+#      deps by the "Install Linux build deps" step (needs passwordless sudo).
+#   3. Optional: repo variable BROWSEROS_CHROMIUM_SRC = persistent checkout path
+#      so the ~100 GB Chromium tree is reused across runs.
 #
 # ── Run ────────────────────────────────────────────────────────────────
 #   gh workflow run "Build Linux AppImage (self-hosted)" -f arch=both
+#   # native arm64 (needs an arm64 runner):
+#   gh workflow run "Build Linux AppImage (self-hosted)" -f arch=both -f arm64_mode=native
 #   Artifacts (per arch): browseros-linux-<arch>  →  BrowserOS_v<ver>_<arch>.AppImage (+ .deb)
 
 on:
@@ -33,10 +39,21 @@ on:
           - both
           - x64
           - arm64
-      runner_labels:
-        description: JSON array of runner labels to target
+      arm64_mode:
+        description: Build arm64 natively (on an arm64 runner) or cross-compiled (on the x64 runner)
+        type: choice
+        default: cross
+        options:
+          - cross
+          - native
+      x64_runner_labels:
+        description: JSON array of labels for the x64 runner (used for x64, and for arm64 when arm64_mode=cross)
         type: string
         default: '["self-hosted","Linux","X64"]'
+      arm64_runner_labels:
+        description: JSON array of labels for the arm64 runner (used for arm64 when arm64_mode=native)
+        type: string
+        default: '["self-hosted","Linux","ARM64"]'
 
 permissions:
   contents: read
@@ -55,12 +72,30 @@ jobs:
         id: plan
         env:
           ARCH: ${{ inputs.arch }}
+          ARM64_MODE: ${{ inputs.arm64_mode }}
+          X64_RUNNER: ${{ inputs.x64_runner_labels }}
+          ARM64_RUNNER: ${{ inputs.arm64_runner_labels }}
         run: |
           set -euo pipefail
-          all='[
-            {"arch":"x64","config":"release.linux.ci.yaml"},
-            {"arch":"arm64","config":"release.linux.arm64.ci.yaml"}
-          ]'
+          # Each lane carries its own runner labels and install-build-deps flag:
+          #   - x64: x64 runner, no cross flag.
+          #   - arm64 cross: x64 runner + `--arm` (arm64 sysroot cross-compile).
+          #   - arm64 native: arm64 runner, no cross flag.
+          if [ "$ARM64_MODE" = "native" ]; then
+            arm64_runner="$ARM64_RUNNER"
+            arm64_deps_flag=""
+          else
+            arm64_runner="$X64_RUNNER"
+            arm64_deps_flag="--arm"
+          fi
+          all="$(jq -c -n \
+            --argjson x64r "$X64_RUNNER" \
+            --argjson arm64r "$arm64_runner" \
+            --arg armflag "$arm64_deps_flag" \
+            '[
+              {arch:"x64",   config:"release.linux.ci.yaml",       runner:$x64r,   deps_flag:""},
+              {arch:"arm64", config:"release.linux.arm64.ci.yaml", runner:$arm64r, deps_flag:$armflag}
+            ]')"
           if [ "$ARCH" != "both" ]; then
             matrix="$(jq -c --arg a "$ARCH" '[ .[] | select(.arch == $a) ]' <<<"$all")"
           else
@@ -75,7 +110,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: build (linux-${{ matrix.arch }})
-    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 900
     defaults:
       run:
@@ -144,11 +179,9 @@ jobs:
           sudo apt-get update
           # libfuse2: appimagetool is itself an AppImage and needs FUSE
           sudo apt-get install -y libfuse2
-          extra=""
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            extra="--arm"
-          fi
-          "$CHROMIUM_SRC/build/install-build-deps.sh" --no-prompt $extra
+          # deps_flag is "--arm" only for arm64 cross-compile on an x64 host;
+          # empty for x64 and for native arm64 (host deps are already correct).
+          "$CHROMIUM_SRC/build/install-build-deps.sh" --no-prompt ${{ matrix.deps_flag }}
 
       # Build the agent server locally and stage it into the browser tree so
       # download_resources (R2) is not needed. Includes local source changes.
