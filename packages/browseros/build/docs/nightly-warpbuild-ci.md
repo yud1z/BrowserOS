@@ -172,6 +172,46 @@ one to watch for sysroot/toolchain issues.
 > target generic arm64 glibc/Wayland; running on postmarketOS or other
 > phone distros may need matching glibc/GPU userspace and is untested.
 
+## Running on musl / Alpine / postmarketOS
+
+postmarketOS (and Alpine) use **musl libc, not glibc**. Every artifact this
+CI produces — including the arm64 AppImage above — is built against the
+Debian **glibc** sysroot, so it is not directly compatible with a musl
+system. There is intentionally **no musl build lane**: adding one is a
+porting project, not a config flip.
+
+Why musl is not a simple target:
+
+- **Chromium has no upstream musl support.** Alpine ships `chromium` only by
+  maintaining a large, version-specific musl patch set (dozens of patches per
+  Chromium release: pthread stack sizes, `execinfo`/`mallinfo`,
+  `res_ninit`, allocator shims, etc.), re-done for every Chromium bump.
+- **The build system is glibc-only.** `configure.py` / `package_linux` target
+  the Debian glibc sysroot; there is no musl toolchain or sysroot path and no
+  `architecture: musl`. (The only `*-linux-musl` strings in the tree are for a
+  small statically linked helper binary, not the browser.)
+- A real port would need, against the pinned Chromium 148: (1) Alpine's
+  chromium musl patches ported into `series_patches/`, (2) a musl
+  cross-toolchain + musl sysroot, (3) the agent server binary rebuilt for
+  musl (Bun supports `--target=bun-linux-arm64-musl`), (4) an AppImage that
+  runs without glibc.
+
+Realistic ways to run BrowserOS on postmarketOS today, easiest first:
+
+1. **`gcompat` + the glibc arm64 AppImage** — `apk add gcompat`, then try the
+   arm64 AppImage. Cheapest experiment, but Chromium is heavy
+   (sandbox/GPU/threads) and often trips the glibc shim; low-to-medium odds.
+2. **glibc container/chroot on the device** — run the glibc arm64 build inside
+   a Debian/Ubuntu container (distrobox, `pmbootstrap chroot`). Most reliable
+   without a musl port; heavier setup.
+3. **True musl port** — the option above; large and ongoing. Only worth it if
+   native musl is a hard requirement.
+4. **Base on Alpine's system Chromium** instead of BrowserOS's fork — musl for
+   free, but loses BrowserOS's patches and agent integration.
+
+Recommended: try (1) first once an arm64 AppImage exists; fall back to (2) for
+something dependable.
+
 ## Signing later (placeholders)
 
 The workflow leaves named-but-unused secret placeholders documented next to
