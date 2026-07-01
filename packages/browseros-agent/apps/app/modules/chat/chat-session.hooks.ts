@@ -21,6 +21,10 @@ import {
 } from '@/lib/constants/analyticsEvents'
 import { conversationStorage } from '@/lib/conversations/conversationStorage'
 import { formatConversationHistory } from '@/lib/conversations/formatConversationHistory'
+import {
+  capCompletedToolOutputs,
+  trimConversationMessages,
+} from '@/lib/conversations/trimMessages'
 import { useConversations } from '@/lib/conversations/useConversations'
 import { declinedAppsStorage } from '@/lib/declined-apps/storage'
 import { resolveChatProvider } from '@/lib/llm-providers/provider-runtime'
@@ -559,6 +563,19 @@ export const useChatSession = (options?: ChatSessionOptions) => {
     syncExecutionHistory(messages, status)
   }, [messages, status, syncExecutionHistory])
 
+  // Bound memory during long agentic turns. A single turn is one assistant
+  // message that accumulates a screenshot per step, so the finish-time trim is
+  // not enough — the live message would grow unbounded and OOM the extension
+  // process. Strip the (unrendered) output of completed tool parts beyond the
+  // most recent few. Safe mid-stream: terminal tool parts receive no further
+  // deltas. No-op (same array reference) until the cap is exceeded.
+  useEffect(() => {
+    const capped = capCompletedToolOutputs(messages)
+    if (capped !== messages) {
+      setMessages(capped)
+    }
+  }, [messages, setMessages])
+
   // Save conversation only after streaming completes — not on every token
   const previousStatusRef = useRef(status)
   // biome-ignore lint/correctness/useExhaustiveDependencies: only save when streaming finishes
@@ -587,10 +604,18 @@ export const useChatSession = (options?: ChatSessionOptions) => {
     const messagesToSave = messages.filter((m) => m.parts?.length > 0)
     if (messagesToSave.length === 0) return
 
+    // Strip heavy, unrendered payloads (screenshots/DOM in tool outputs) from
+    // older messages so a long-running session cannot grow the heap without
+    // bound. Free the live in-memory copy too when trimming changed anything.
+    const trimmed = trimConversationMessages(messagesToSave)
+    if (trimmed !== messagesToSave) {
+      setMessages(trimmed)
+    }
+
     if (isLoggedIn) {
-      saveRemoteConversation(conversationIdRef.current, messagesToSave)
+      saveRemoteConversation(conversationIdRef.current, trimmed)
     } else {
-      saveLocalConversation(conversationIdRef.current, messagesToSave)
+      saveLocalConversation(conversationIdRef.current, trimmed)
     }
 
     invalidateCredits()

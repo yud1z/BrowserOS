@@ -3,9 +3,17 @@ import { useEffect, useState } from 'react'
 import { useSessionInfo } from '../auth/sessionStorage'
 import { removeConversationExecutionHistory } from '../execution-history/storage'
 import { type Conversation, conversationStorage } from './conversationStorage'
+import { trimConversationMessages } from './trimMessages'
 import { uploadConversationsToGraphql } from './uploadConversationsToGraphql'
 
 const MAX_CONVERSATIONS = 50
+
+// Cheap change signature so we skip redundant writes without stringifying the
+// entire (potentially large) conversation twice on every finished turn.
+const conversationSignature = (messages: UIMessage[]): string => {
+  const last = messages[messages.length - 1]
+  return `${messages.length}:${last?.id ?? ''}:${last?.parts?.length ?? 0}`
+}
 
 export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -34,27 +42,30 @@ export function useConversations() {
   }
 
   const saveConversation = async (id: string, messages: UIMessage[]) => {
+    // Defensive: callers may pass untrimmed messages. Strip heavy, unrendered
+    // payloads from old messages before they hit chrome.storage.
+    const trimmed = trimConversationMessages(messages)
     const current = (await conversationStorage.getValue()) ?? []
     const existingIndex = current.findIndex((c) => c.id === id)
 
     if (existingIndex >= 0) {
       const existing = current[existingIndex]
       const hasContentChanged =
-        existing.messages.length !== messages.length ||
-        JSON.stringify(existing.messages) !== JSON.stringify(messages)
+        conversationSignature(existing.messages) !==
+        conversationSignature(trimmed)
 
       if (!hasContentChanged) return
 
       current[existingIndex] = {
         ...existing,
-        messages,
+        messages: trimmed,
         lastMessagedAt: Date.now(),
       }
       await conversationStorage.setValue(current)
     } else {
       const newConversation: Conversation = {
         id,
-        messages,
+        messages: trimmed,
         lastMessagedAt: Date.now(),
       }
       const nextConversations = [newConversation, ...current]
